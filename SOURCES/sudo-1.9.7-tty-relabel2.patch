@@ -1,0 +1,223 @@
+diff -up ./src/exec.c.tty2 ./src/exec.c
+--- ./src/exec.c.tty2	2018-04-29 21:59:24.000000000 +0200
++++ ./src/exec.c	2021-07-02 13:34:53.803816249 +0200
+@@ -99,19 +99,11 @@ restore_nproc(void)
+  * Returns true on success and false on failure.
+  */
+ static bool
+-exec_setup(struct command_details *details, const char *ptyname, int ptyfd)
++exec_setup(struct command_details *details)
+ {
+     bool ret = false;
+     debug_decl(exec_setup, SUDO_DEBUG_EXEC)
+ 
+-#ifdef HAVE_SELINUX
+-    if (ISSET(details->flags, CD_RBAC_ENABLED)) {
+-	if (selinux_setup(details->selinux_role, details->selinux_type,
+-	    ptyname ? ptyname : user_details.tty, ptyfd) == -1)
+-	    goto done;
+-    }
+-#endif
+-
+     /* Restore coredumpsize resource limit before running. */
+     if (sudo_conf_disable_coredump())
+ 	disable_coredump(true);
+@@ -141,7 +133,7 @@ exec_setup(struct command_details *detai
+ #endif /* HAVE_PRIV_SET */
+ 
+ #ifdef HAVE_GETUSERATTR
+-	if (aix_prep_user(details->pw->pw_name, ptyname ? ptyname : user_details.tty) != 0) {
++	if (aix_prep_user(details->pw->pw_name, details->tty) != 0) {
+ 	    /* error message displayed by aix_prep_user */
+ 	    goto done;
+ 	}
+@@ -262,7 +254,7 @@ exec_cmnd(struct command_details *detail
+     debug_decl(exec_cmnd, SUDO_DEBUG_EXEC)
+ 
+     restore_signals();
+-    if (exec_setup(details, NULL, -1) == true) {
++    if (exec_setup(details) == true) {
+ 	/* headed for execve() */
+ 	if (details->closefrom >= 0) {
+ 	    int fd, maxfd;
+diff -up ./src/exec_monitor.c.tty2 ./src/exec_monitor.c
+--- ./src/exec_monitor.c.tty2	2021-07-02 10:07:33.951025634 +0200
++++ ./src/exec_monitor.c	2021-07-02 13:34:00.388475413 +0200
+@@ -549,10 +549,26 @@ exec_monitor(struct command_details *det
+     if (pipe2(errpipe, O_CLOEXEC) != 0)
+ 	sudo_fatal(U_("unable to create pipe"));
+ 
++#ifdef HAVE_SELINUX
++    if (ISSET(details->flags, CD_RBAC_ENABLED)) {
++        if (selinux_setup(details->selinux_role, details->selinux_type,
++                          details->tty, io_fds[SFD_SLAVE]) == -1)
++            goto bad;
++        }
++#endif
++
+     mc.cmnd_pid = sudo_debug_fork();
+     switch (mc.cmnd_pid) {
+     case -1:
+ 	sudo_warn(U_("unable to fork"));
++
++#ifdef HAVE_SELINUX
++    if (ISSET(details->flags, CD_RBAC_ENABLED)) {
++        if (selinux_restore_tty() != 0)
++            sudo_warnx(U_("unable to restore tty label"));
++        }
++#endif
++
+ 	goto bad;
+     case 0:
+ 	/* child */
+diff -up ./src/exec_nopty.c.tty2 ./src/exec_nopty.c
+--- ./src/exec_nopty.c.tty2	2018-04-29 21:59:31.000000000 +0200
++++ ./src/exec_nopty.c	2021-07-02 10:07:33.951025634 +0200
+@@ -371,6 +371,17 @@ exec_nopty(struct command_details *detai
+ 	debug_return;
+     }
+ 
++#ifdef HAVE_SELINUX
++    if (ISSET(details->flags, CD_RBAC_ENABLED)) {
++        if (selinux_setup(details->selinux_role, details->selinux_type,
++		details->tty, -1) == -1) {
++	    cstat->type = CMD_ERRNO;
++	    cstat->val = errno;
++	    debug_return;
++	}
++    }
++#endif
++
+     ec.cmnd_pid = sudo_debug_fork();
+     switch (ec.cmnd_pid) {
+     case -1:
+diff -up ./src/exec_pty.c.tty2 ./src/exec_pty.c
+--- ./src/exec_pty.c.tty2	2021-07-02 10:07:33.940025770 +0200
++++ ./src/exec_pty.c	2021-07-02 13:40:49.569392687 +0200
+@@ -95,7 +95,7 @@ struct io_buffer {
+ };
+ SLIST_HEAD(io_buffer_list, io_buffer);
+ 
+-static char slavename[PATH_MAX];
++static char ptyname[PATH_MAX];
+ int io_fds[6] = { -1, -1, -1, -1, -1, -1};
+ static bool foreground, pipeline;
+ static bool tty_initialized;
+@@ -123,7 +123,7 @@ pty_cleanup(void)
+     if (io_fds[SFD_USERTTY] != -1)
+ 	sudo_term_restore(io_fds[SFD_USERTTY], false);
+     if (utmp_user != NULL)
+-	utmp_logout(slavename, 0);
++	utmp_logout(ptyname, 0);
+ 
+     debug_return;
+ }
+@@ -131,7 +131,7 @@ pty_cleanup(void)
+ /*
+  * Allocate a pty if /dev/tty is a tty.
+  * Fills in io_fds[SFD_USERTTY], io_fds[SFD_MASTER], io_fds[SFD_SLAVE]
+- * and slavename globals.
++ * and ptyname globals.
+  */
+ static bool
+ pty_setup(struct command_details *details, const char *tty)
+@@ -146,14 +146,17 @@ pty_setup(struct command_details *detail
+     }
+ 
+     if (!get_pty(&io_fds[SFD_MASTER], &io_fds[SFD_SLAVE],
+-	slavename, sizeof(slavename), details->euid))
++	ptyname, sizeof(ptyname), details->euid))
+ 	sudo_fatal(U_("unable to allocate pty"));
+ 
++    /* Update tty name in command details (used by SELinux and AIX). */
++    details->tty = ptyname;
++
+     /* Add entry to utmp/utmpx? */
+     if (ISSET(details->flags, CD_SET_UTMP)) {
+ 	utmp_user =
+ 	    details->utmp_user ? details->utmp_user : user_details.username;
+-	utmp_login(tty, slavename, io_fds[SFD_SLAVE], utmp_user);
++	utmp_login(tty, ptyname, io_fds[SFD_SLAVE], utmp_user);
+     }
+ 
+     sudo_debug_printf(SUDO_DEBUG_INFO,
+@@ -172,8 +175,8 @@ pty_make_controlling(void)
+ 	if (ioctl(io_fds[SFD_SLAVE], TIOCSCTTY, NULL) != 0)
+ 	    return -1;
+ #else
+-	/* Set controlling tty by reopening slave. */
+-	int fd = open(slavename, O_RDWR);
++	/* Set controlling tty by reopening pty slave. */
++	int fd = open(ptyname, O_RDWR);
+ 	if (fd == -1)
+ 	    return -1;
+ 	close(fd);
+@@ -787,7 +790,7 @@ pty_close(struct command_status *cstat)
+ 
+     /* Update utmp */
+     if (utmp_user != NULL)
+-	utmp_logout(slavename, cstat->type == CMD_WSTATUS ? cstat->val : 0);
++	utmp_logout(ptyname, cstat->type == CMD_WSTATUS ? cstat->val : 0);
+ 
+     /* Close pty master. */
+     if (io_fds[SFD_MASTER] != -1)
+diff -up ./src/selinux.c.tty2 ./src/selinux.c
+--- ./src/selinux.c.tty2	2021-07-02 10:07:33.950025646 +0200
++++ ./src/selinux.c	2021-07-02 10:07:33.952025622 +0200
+@@ -123,10 +123,11 @@ selinux_restore_tty(void)
+ 	goto skip_relabel;
+     }
+ 
+-    if (strcmp(chk_tty_context, se_state.new_tty_context) == 0) {
++    if (strcmp(chk_tty_context, se_state.new_tty_context) != 0) {
+ 	sudo_warnx(U_("%s changed labels"), se_state.ttyn);
+-	sudo_debug_printf(SUDO_DEBUG_INFO, "%s: tty label changed, skipping",
+-	    __func__);
++	sudo_debug_printf(SUDO_DEBUG_INFO,
++	    "%s: not restoring tty label, expected %s, have %s",
++	    __func__, se_state.new_tty_context, chk_tty_context);
+ 	goto skip_relabel;
+     }
+ 
+@@ -173,6 +174,7 @@ relabel_tty(const char *ttyn, int ptyfd)
+ 	    __func__);
+ 	debug_return_int(0);
+     }
++    sudo_debug_printf(SUDO_DEBUG_INFO, "%s: relabeling tty %s", __func__, ttyn);
+ 
+     /* If sudo is not allocating a pty for the command, open current tty. */
+     if (ptyfd == -1) {
+@@ -345,8 +347,9 @@ bad:
+ }
+ 
+ /* 
+- * Set the exec and tty contexts in preparation for fork/exec.
+- * Must run as root, before the uid change.
++ * Determine the exec and tty contexts in preparation for fork/exec.
++ * Must run as root, before forking the child process.
++ * Sets the tty context but not the exec context (which happens later).
+  * If ptyfd is not -1, it indicates we are running
+  * in a pty and do not need to reset std{in,out,err}.
+  * Returns 0 on success and -1 on failure.
+diff -up ./src/sudo.c.tty2 ./src/sudo.c
+--- ./src/sudo.c.tty2	2018-04-29 21:59:31.000000000 +0200
++++ ./src/sudo.c	2021-07-02 10:07:33.952025622 +0200
+@@ -277,6 +277,7 @@ main(int argc, char *argv[], char *envp[
+ 	    }
+ 	    /* Setup command details and run command/edit. */
+ 	    command_info_to_details(command_info, &command_details);
++	    command_details.tty = user_details.tty;
+ 	    command_details.argv = argv_out;
+ 	    command_details.envp = user_env_out;
+ 	    if (ISSET(sudo_mode, MODE_LOGIN_SHELL))
+diff -up ./src/sudo.h.tty2 ./src/sudo.h
+--- ./src/sudo.h.tty2	2018-04-29 21:59:24.000000000 +0200
++++ ./src/sudo.h	2021-07-02 10:07:33.952025622 +0200
+@@ -162,6 +162,7 @@ struct command_details {
+     const char *selinux_role;
+     const char *selinux_type;
+     const char *utmp_user;
++    const char *tty;
+     char **argv;
+     char **envp;
+ #ifdef HAVE_PRIV_SET

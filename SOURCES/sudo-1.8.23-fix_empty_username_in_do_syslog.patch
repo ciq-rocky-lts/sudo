@@ -1,0 +1,35 @@
+diff --git a/plugins/sudoers/logging.c b/plugins/sudoers/logging.c
+index 2c685cd..7751a67 100644
+--- a/plugins/sudoers/logging.c
++++ b/plugins/sudoers/logging.c
+@@ -106,7 +106,15 @@ do_syslog(int pri, char *msg)
+      * Log the full line, breaking into multiple syslog(3) calls if necessary
+      */
+     fmt = _("%8s : %s");
+-    maxlen = def_syslog_maxlen - (strlen(fmt) - 5 + strlen(sudo_user_name));
++
++
++    if (!sudo_user_name) {
++        maxlen = def_syslog_maxlen - (strlen(fmt) - 5);
++    }
++    else {
++        maxlen = def_syslog_maxlen - (strlen(fmt) - 5 + strlen(sudo_user_name));
++    }
++
+     for (p = msg; *p != '\0'; ) {
+ 	len = strlen(p);
+ 	if (len > maxlen) {
+@@ -122,7 +130,12 @@ do_syslog(int pri, char *msg)
+ 	    save = *tmp;
+ 	    *tmp = '\0';
+ 
+-	    mysyslog(pri, fmt, sudo_user_name, p);
++        if(!sudo_user_name) {
++            mysyslog(pri, fmt, "NaN", p);
++        }
++	    else{
++            mysyslog(pri, fmt, sudo_user_name, p);
++        }
+ 
+ 	    *tmp = save;			/* restore saved character */
+ 

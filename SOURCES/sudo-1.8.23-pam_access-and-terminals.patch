@@ -1,0 +1,344 @@
+unchanged:
+--- b/plugins/sudoers/auth/pam.c
++++ b/plugins/sudoers/auth/pam.c
+@@ -210,59 +210,71 @@
+ sudo_pam_approval(struct passwd *pw, sudo_auth *auth, bool exempt)
+ {
+     const char *s;
++    int rc, status = AUTH_SUCCESS;
+     int *pam_status = (int *) auth->data;
+     debug_decl(sudo_pam_approval, SUDOERS_DEBUG_AUTH)
+ 
+-    *pam_status = pam_acct_mgmt(pamh, PAM_SILENT);
+-    switch (*pam_status) {
++    rc = pam_acct_mgmt(pamh, PAM_SILENT);
++    switch (rc) {
+ 	case PAM_SUCCESS:
+-	    debug_return_int(AUTH_SUCCESS);
++	    break;
+ 	case PAM_AUTH_ERR:
+ 	    log_warningx(0, N_("account validation failure, "
+ 		"is your account locked?"));
+-	    debug_return_int(AUTH_FATAL);
++	    status = AUTH_FATAL;
++	    break;
+ 	case PAM_NEW_AUTHTOK_REQD:
+ 	    /* Ignore if user is exempt from password restrictions. */
+-	    if (exempt)
+-		debug_return_int(AUTH_SUCCESS);
++	    if (exempt) {
++		rc = *pam_status;
++		break;
++	    }
+ 	    /* New password required, try to change it. */
+ 	    log_warningx(0, N_("Account or password is "
+ 		"expired, reset your password and try again"));
+-	    *pam_status = pam_chauthtok(pamh,
+-		PAM_CHANGE_EXPIRED_AUTHTOK);
+-	    if (*pam_status == PAM_SUCCESS)
+-		debug_return_int(AUTH_SUCCESS);
+-	    if ((s = pam_strerror(pamh, *pam_status)) == NULL)
++	    rc = pam_chauthtok(pamh, PAM_CHANGE_EXPIRED_AUTHTOK);
++	    if (rc == PAM_SUCCESS)
++		break;
++	    if ((s = pam_strerror(pamh, rc)) == NULL)
+ 		s = "unknown error";
+ 	    log_warningx(0,
+ 		N_("unable to change expired password: %s"), s);
+-	    debug_return_int(AUTH_FAILURE);
++	    status = AUTH_FAILURE;
++	    break;
+ 	case PAM_AUTHTOK_EXPIRED:
+ 	    /* Ignore if user is exempt from password restrictions. */
+-	    if (exempt)
+-		debug_return_int(AUTH_SUCCESS);
++	    if (exempt) {
++		rc = *pam_status;
++		break;
++	    }
+ 	    /* Password expired, cannot be updated by user. */
+ 	    log_warningx(0,
+ 		N_("Password expired, contact your system administrator"));
+-	    debug_return_int(AUTH_FATAL);
++	    status = AUTH_FATAL;
++	    break;
+ 	case PAM_ACCT_EXPIRED:
+ 	    log_warningx(0,
+ 		N_("Account expired or PAM config lacks an \"account\" "
+ 		"section for sudo, contact your system administrator"));
+-	    debug_return_int(AUTH_FATAL);
++	    status = AUTH_FATAL;
++	    break;
+ 	case PAM_AUTHINFO_UNAVAIL:
+ 	case PAM_MAXTRIES:
+ 	case PAM_PERM_DENIED:
+-	    s = pam_strerror(pamh, *pam_status);
++	    s = pam_strerror(pamh, rc);
+ 	    log_warningx(0, N_("PAM account management error: %s"),
+ 		s ? s : "unknown error");
+-	    debug_return_int(AUTH_FAILURE);
++	    status = AUTH_FAILURE;
++	    break;
+ 	default:
+-	    s = pam_strerror(pamh, *pam_status);
++	    s = pam_strerror(pamh, rc);
+ 	    log_warningx(0, N_("PAM account management error: %s"),
+ 		s ? s : "unknown error");
+-	    debug_return_int(AUTH_FATAL);
++	    status = AUTH_FATAL;
++	    break;
+     }
++    *pam_status = rc;
++    debug_return_int(status);
+ }
+ 
+ int
+unchanged:
+--- a/doc/sudoers.cat
++++ b/doc/sudoers.cat
+@@ -1286,6 +1286,17 @@ SSUUDDOOEERRSS OOPPTTIIOONNSS
+                        well as the _P_r_e_v_e_n_t_i_n_g _s_h_e_l_l _e_s_c_a_p_e_s section at the end
+                        of this manual.  This flag is _o_f_f by default.
+ 
++     pam_acct_mgmt     On systems that use PAM for authentication, ssuuddoo will
++                       perform PAM account validation for the invoking user by
++                       default.  The actual checks performed depend on which
++                       PAM modules are configured.  If enabled, account
++                       validation will be performed regardless of whether or
++                       not a password is required.  This flag is _o_n by
++                       default.
++
++                       This setting is only supported by version 1.8.28 or
++                       higher.
++
+      pam_session       On systems that use PAM for authentication, ssuuddoo will
+                        create a new PAM session for the command to be run in.
+                        Disabling _p_a_m___s_e_s_s_i_o_n may be needed on older PAM
+unchanged:
+--- a/doc/sudoers.man.in
++++ b/doc/sudoers.man.in
+@@ -2722,6 +2722,19 @@ This flag is
+ \fIoff\fR
+ by default.
+ .TP 18n
++pam_acct_mgmt
++On systems that use PAM for authentication,
++\fBsudo\fR
++will perform PAM account validation for the invoking user by default.
++The actual checks performed depend on which PAM modules are configured.
++If enabled, account validation will be performed regardless of whether
++or not a password is required.
++This flag is
++\fIon\fR
++by default.
++.sp
++This setting is only supported by version 1.8.28 or higher.
++.TP 18n
+ pam_session
+ On systems that use PAM for authentication,
+ \fBsudo\fR
+unchanged:
+--- a/doc/sudoers.mdoc.in
++++ b/doc/sudoers.mdoc.in
+@@ -2560,6 +2560,18 @@ section at the end of this manual.
+ This flag is
+ .Em off
+ by default.
++.It pam_acct_mgmt
++On systems that use PAM for authentication,
++.Nm sudo
++will perform PAM account validation for the invoking user by default.
++The actual checks performed depend on which PAM modules are configured.
++If enabled, account validation will be performed regardless of whether
++or not a password is required.
++This flag is
++.Em on
++by default.
++.Pp
++This setting is only supported by version 1.8.28 or higher.
+ .It pam_session
+ On systems that use PAM for authentication,
+ .Nm sudo
+only in patch2:
+unchanged:
+--- ./plugins/sudoers/auth/pam.c.pamm	2019-01-11 21:30:17.000000000 +0100
++++ ./plugins/sudoers/auth/pam.c	2019-08-02 15:14:38.980077956 +0200
+@@ -214,66 +214,68 @@ sudo_pam_approval(struct passwd *pw, sud
+     int *pam_status = (int *) auth->data;
+     debug_decl(sudo_pam_approval, SUDOERS_DEBUG_AUTH)
+ 
+-    rc = pam_acct_mgmt(pamh, PAM_SILENT);
+-    switch (rc) {
+-	case PAM_SUCCESS:
+-	    break;
+-	case PAM_AUTH_ERR:
+-	    log_warningx(0, N_("account validation failure, "
+-		"is your account locked?"));
+-	    status = AUTH_FATAL;
+-	    break;
+-	case PAM_NEW_AUTHTOK_REQD:
+-	    /* Ignore if user is exempt from password restrictions. */
+-	    if (exempt) {
+-		rc = *pam_status;
+-		break;
+-	    }
+-	    /* New password required, try to change it. */
+-	    log_warningx(0, N_("Account or password is "
+-		"expired, reset your password and try again"));
+-	    rc = pam_chauthtok(pamh, PAM_CHANGE_EXPIRED_AUTHTOK);
+-	    if (rc == PAM_SUCCESS)
+-		break;
+-	    if ((s = pam_strerror(pamh, rc)) == NULL)
+-		s = "unknown error";
+-	    log_warningx(0,
+-		N_("unable to change expired password: %s"), s);
+-	    status = AUTH_FAILURE;
+-	    break;
+-	case PAM_AUTHTOK_EXPIRED:
+-	    /* Ignore if user is exempt from password restrictions. */
+-	    if (exempt) {
+-		rc = *pam_status;
+-		break;
+-	    }
+-	    /* Password expired, cannot be updated by user. */
+-	    log_warningx(0,
+-		N_("Password expired, contact your system administrator"));
+-	    status = AUTH_FATAL;
+-	    break;
+-	case PAM_ACCT_EXPIRED:
+-	    log_warningx(0,
+-		N_("Account expired or PAM config lacks an \"account\" "
+-		"section for sudo, contact your system administrator"));
+-	    status = AUTH_FATAL;
+-	    break;
+-	case PAM_AUTHINFO_UNAVAIL:
+-	case PAM_MAXTRIES:
+-	case PAM_PERM_DENIED:
+-	    s = pam_strerror(pamh, rc);
+-	    log_warningx(0, N_("PAM account management error: %s"),
+-		s ? s : "unknown error");
+-	    status = AUTH_FAILURE;
+-	    break;
+-	default:
+-	    s = pam_strerror(pamh, rc);
+-	    log_warningx(0, N_("PAM account management error: %s"),
+-		s ? s : "unknown error");
+-	    status = AUTH_FATAL;
+-	    break;
++    if (def_pam_acct_mgmt) {
++	rc = pam_acct_mgmt(pamh, PAM_SILENT);
++	switch (rc) {
++	    case PAM_SUCCESS:
++		break;
++	    case PAM_AUTH_ERR:
++		log_warningx(0, N_("account validation failure, "
++		    "is your account locked?"));
++		status = AUTH_FATAL;
++		break;
++	    case PAM_NEW_AUTHTOK_REQD:
++		/* Ignore if user is exempt from password restrictions. */
++		if (exempt) {
++		    rc = *pam_status;
++		    break;
++		}
++		/* New password required, try to change it. */
++		log_warningx(0, N_("Account or password is "
++		    "expired, reset your password and try again"));
++		rc = pam_chauthtok(pamh, PAM_CHANGE_EXPIRED_AUTHTOK);
++		if (rc == PAM_SUCCESS)
++		    break;
++		if ((s = pam_strerror(pamh, rc)) == NULL)
++		    s = "unknown error";
++		log_warningx(0,
++		    N_("unable to change expired password: %s"), s);
++		status = AUTH_FAILURE;
++		break;
++	    case PAM_AUTHTOK_EXPIRED:
++		/* Ignore if user is exempt from password restrictions. */
++		if (exempt) {
++		    rc = *pam_status;
++		    break;
++		}
++		/* Password expired, cannot be updated by user. */
++		log_warningx(0,
++		    N_("Password expired, contact your system administrator"));
++		status = AUTH_FATAL;
++		break;
++	    case PAM_ACCT_EXPIRED:
++		log_warningx(0,
++		    N_("Account expired or PAM config lacks an \"account\" "
++		    "section for sudo, contact your system administrator"));
++		status = AUTH_FATAL;
++		break;
++	    case PAM_AUTHINFO_UNAVAIL:
++	    case PAM_MAXTRIES:
++	    case PAM_PERM_DENIED:
++		s = pam_strerror(pamh, rc);
++		log_warningx(0, N_("PAM account management error: %s"),
++		    s ? s : "unknown error");
++		status = AUTH_FAILURE;
++		break;
++	    default:
++		s = pam_strerror(pamh, rc);
++		log_warningx(0, N_("PAM account management error: %s"),
++		    s ? s : "unknown error");
++		status = AUTH_FATAL;
++		break;
++	}
++	*pam_status = rc;
+     }
+-    *pam_status = rc;
+     debug_return_int(status);
+ }
+ 
+only in patch2:
+unchanged:
+--- ./plugins/sudoers/defaults.c.pamm	2019-08-02 15:14:38.973077882 +0200
++++ ./plugins/sudoers/defaults.c	2019-08-02 15:14:38.987078030 +0200
+@@ -642,6 +642,7 @@ init_defaults(void)
+     if ((def_editor = strdup(EDITOR)) == NULL)
+ 	goto oom;
+     def_set_utmp = true;
++    def_pam_acct_mgmt = true;
+     def_pam_setcred = true;
+     def_syslog_maxlen = MAXSYSLOGLEN;
+     def_case_insensitive_user = true;
+only in patch2:
+unchanged:
+--- ./plugins/sudoers/def_data.c.pamm	2019-08-02 15:14:38.976077914 +0200
++++ ./plugins/sudoers/def_data.c	2019-08-02 15:20:37.592876029 +0200
+@@ -502,6 +502,10 @@ struct sudo_defs_types sudo_defs_table[]
+ 	N_("Don't fork and wait for the command to finish, just exec it"),
+ 	NULL,
+     }, {
++  "pam_acct_mgmt", T_FLAG,
++  N_("Perform PAM account validation management"),
++  NULL,
++    }, {
+ 	NULL, 0, NULL
+     }
+ };
+only in patch2:
+unchanged:
+--- ./plugins/sudoers/def_data.h.pamm	2019-08-02 15:14:38.976077914 +0200
++++ ./plugins/sudoers/def_data.h	2019-08-02 15:14:38.987078030 +0200
+@@ -230,6 +230,8 @@
+ #define def_legacy_group_processing (sudo_defs_table[I_LEGACY_GROUP_PROCESSING].sd_un.flag)
+ #define I_CMND_NO_WAIT          115
+ #define def_cmnd_no_wait        (sudo_defs_table[I_CMND_NO_WAIT].sd_un.flag)
++#define I_PAM_ACCT_MGMT         116
++#define def_pam_acct_mgmt       (sudo_defs_table[I_PAM_ACCT_MGMT].sd_un.flag)
+ 
+ enum def_tuple {
+ 	never,
+only in patch2:
+unchanged:
+--- ./plugins/sudoers/def_data.in.pamm	2019-08-02 15:14:38.976077914 +0200
++++ ./plugins/sudoers/def_data.in	2019-08-02 15:14:38.987078030 +0200
+@@ -363,3 +363,6 @@ legacy_group_processing
+ cmnd_no_wait
+ 	T_FLAG
+ 	"Don't fork and wait for the command to finish, just exec it"
++pam_acct_mgmt
++	T_FLAG
++	"Perform PAM account validation management"
