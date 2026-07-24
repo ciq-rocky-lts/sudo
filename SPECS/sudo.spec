@@ -1,7 +1,7 @@
 Summary: Allows restricted root access for specified users
 Name: sudo
 Version: 1.9.5p2
-Release: 10%{?dist}.3
+Release: 10.1%{?dist}.2
 License: ISC
 URL: https://www.sudo.ws
 
@@ -281,6 +281,9 @@ EOF
 %attr(0644,root,root) %{_libexecdir}/sudo/python_plugin.so
 
 %changelog
+* Fri Jul 24 2026 Jeff Uphoff <juphoff@ciq.com> - 1.9.5p2-10.1.2
+- Fix previous version bump
+
 * Wed Jun 03 2026 Jeremy Allison <jallison@ciq.com> - 1.9.5p2-10.3
 - Fix CVE-2026-35535
 
