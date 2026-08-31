@@ -1,7 +1,7 @@
 Summary: Allows restricted root access for specified users
 Name: sudo
 Version: 1.8.23
-Release: 11%{?dist}
+Release: 11.1%{?dist}
 License: ISC
 Group: Applications/System
 URL: http://www.courtesan.com/sudo/
@@ -87,6 +87,8 @@ Patch25: sudo-1.9.12-CVE-2023-22809-backports.patch
 Patch26: sudo-1.9.12-CVE-2023-22809.patch
 
 Patch30: sudo-CVE-2025-32462.patch
+# CVE-2021-23239 — upstream backport
+Patch31: sudo-1.8.23-CVE-2021-23239.patch
 
 %description
 Sudo (superuser do) allows a system administrator to give certain
@@ -146,6 +148,7 @@ plugins that use %{name}.
 %patch26 -p1 -b .cve
 
 %patch30 -p1 -b .CVE-2025-32462
+%patch31 -p1 -b .CVE-2021-23239
 
 %build
 autoreconf -I m4 -fv --install
@@ -282,6 +285,9 @@ rm -rf %{buildroot}
 %{_mandir}/man8/sudo_plugin.8*
 
 %changelog
+* Sun Aug 16 2026 Jason Rodriguez <jrodriguez@ciq.com> - 1.8.23-11.1
+- Fix CVE-2021-23239
+
 * Mon Jul 07 2025 Pratham Patel <ppatel@ciq.com> - 1.8.23-11
 - Resolve CVE-2025-32462
 
